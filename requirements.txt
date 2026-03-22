@@ -1,6 +1,6 @@
 streamlit
 pandas
-requests
 xgboost
 scikit-learn
-numpy
+requests
+supabase
