@@ -7,7 +7,7 @@ import math
 from datetime import date
 from supabase import create_client
 
-# ====================== SUPABASE CONNECTION ======================
+# ====================== SUPABASE ======================
 @st.cache_resource
 def get_supabase():
     return create_client(
@@ -25,7 +25,6 @@ def load_history():
 
 def save_to_history(row_dict):
     client = get_supabase()
-    # Prevent duplicates
     check = client.table("prediction_history").select("id") \
         .eq("date", row_dict["date"]) \
         .eq("fixture_id", row_dict["fixture_id"]) \
@@ -58,10 +57,25 @@ def safe_float(val, default=0.0):
 st.set_page_config(page_title="SportyBet AI Predictor v2", layout="wide")
 st.title("⚽ SportyBet AI Predictor v2 – Stats + Poisson + XGBoost")
 
-# ====================== API SETUP (moved here so functions can use it) ======================
+# ====================== API SETUP ======================
 API_KEY = st.sidebar.text_input("API-Football Key", type="password")
 BASE_URL = "https://v3.football.api-sports.io"
 headers = {"x-apisports-key": API_KEY} if API_KEY else None
+
+# ====================== RAPIDAPI FOR FULL LEAGUES (2,100+ leagues) ======================
+try:
+    RAPID_API_KEY = st.secrets["rapidapi"]["key"]
+except (KeyError, TypeError):
+    RAPID_API_KEY = None
+
+if RAPID_API_KEY:
+    st.sidebar.success("✅ RapidAPI loaded – full leagues enabled! (lower divisions, cups, etc.)")
+else:
+    st.sidebar.info("💡 Add [rapidapi] key to secrets.toml for unlimited leagues worldwide")
+
+if not API_KEY:
+    st.sidebar.error("⚠️ Enter your API-Football key")
+    st.stop()
 
 le_market = LabelEncoder()
 
@@ -82,7 +96,6 @@ def calculate_poisson_markets(lambda_h, lambda_a):
     return round(btts_yes*100, 1), scores[:3]
 
 def get_prediction(fixture_id):
-    # (same as before - unchanged)
     r = requests.get(f"{BASE_URL}/predictions?fixture={fixture_id}", headers=headers)
     if r.status_code != 200 or not r.json().get("response"):
         return None
@@ -148,7 +161,7 @@ def auto_update_history():
     if df.empty:
         st.info("No history yet.")
         return
-    with st.spinner("Fetching real results for ALL past predictions..."):
+    with st.spinner("Fetching real results..."):
         updated = 0
         client = get_supabase()
         for idx, row in df.iterrows():
@@ -190,7 +203,8 @@ def auto_update_history():
         st.success(f"✅ Updated {updated} past predictions!")
 
 # ====================== MAIN APP ======================
-date_to_check = st.sidebar.date_input("Date", value=date.today())
+date_to_check = st.sidebar.date_input("Date", value=date(2026, 3, 28))
+
 colA, colB = st.sidebar.columns(2)
 generate_btn = colA.button("Generate Predictions")
 update_btn = colB.button("🔄 Auto-Update History")
@@ -199,15 +213,36 @@ if update_btn and API_KEY:
     auto_update_history()
 
 if generate_btn and API_KEY:
-    with st.spinner("Fetching fixtures + predictions + Poisson..."):
-        fixtures = requests.get(f"{BASE_URL}/fixtures?date={date_to_check.strftime('%Y-%m-%d')}", headers=headers).json().get("response", [])
+    with st.spinner("Fetching fixtures..."):
+        if RAPID_API_KEY:
+            rapid_headers = {
+                "x-rapidapi-key": RAPID_API_KEY,
+                "x-rapidapi-host": "free-api-live-football-data.p.rapidapi.com"
+            }
+            resp = requests.get(
+                f"https://free-api-live-football-data.p.rapidapi.com/fixtures/date/{date_to_check.strftime('%Y-%m-%d')}",
+                headers=rapid_headers
+            )
+            source = "RapidAPI (ALL leagues)"
+        else:
+            resp = requests.get(f"{BASE_URL}/fixtures?date={date_to_check.strftime('%Y-%m-%d')}", headers=headers)
+            source = "API-Football (limited leagues)"
+        
+        fixtures = resp.json().get("response", []) if resp.status_code == 200 else []
+        
+        ns_fixtures = [f for f in fixtures if f.get("fixture", {}).get("status", {}).get("short") == "NS"]
+        
+        st.info(f"📅 **Date checked:** {date_to_check} | Total fixtures: {len(fixtures)} | Upcoming (NS): {len(ns_fixtures)} | Source: {source}")
+        
+        if len(ns_fixtures) == 0:
+            st.warning("⚠️ No upcoming matches (NS) on this date. Try tomorrow or the next weekend. Free plans show more matches closer to kick-off.")
+            st.stop()
         
         predictions = []
-        for f in fixtures[:20]:
-            if f["fixture"]["status"]["short"] == "NS":
-                pred = get_prediction(f["fixture"]["id"])
-                if pred:
-                    predictions.append(pred)
+        for f in ns_fixtures[:20]:
+            pred = get_prediction(f["fixture"]["id"])
+            if pred:
+                predictions.append(pred)
         
         model, encoder = train_xgboost()
         
@@ -240,7 +275,6 @@ if generate_btn and API_KEY:
             df = pd.DataFrame(columns=["match", "market", "selection", "confidence", "fixture_id",
                                        "form_diff", "att_diff", "def_diff", "poisson_home"])
         
-        # AUTO-LOG TO SUPABASE
         logged_count = 0
         today = str(date.today())
         for bet in all_bets:
@@ -254,10 +288,9 @@ if generate_btn and API_KEY:
             if save_to_history(row_dict):
                 logged_count += 1
         
-        hist_len = len(load_history())
-        st.success(f"✅ Generated {len(predictions)} matches • Auto-logged {logged_count} new predictions (total history: {hist_len} rows)")
+        st.success(f"✅ Generated {len(predictions)} matches • Auto-logged {logged_count} new predictions (total history: {len(load_history())} rows)")
 
-        # AI Insights + Display sections (exactly the same as before)
+        # AI Insights + Display
         if model is not None:
             st.sidebar.subheader("🔍 AI Learned Insights")
             importances = pd.Series(model.feature_importances_, 
@@ -295,4 +328,4 @@ if not df.empty:
 else:
     st.info("Generate predictions — they are now saved forever in Supabase!")
 
-st.caption("✅ Permanent Supabase storage • XGBoost retrains on every result")
+st.caption("✅ Permanent Supabase storage • XGBoost retrains on every result • Full-league support via RapidAPI")
