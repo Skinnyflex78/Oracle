@@ -80,7 +80,6 @@ def get_prediction(fixture_id):
     
     btts_prob, top_scores = calculate_poisson_markets(lambda_h, lambda_a)
     
-    # Over 1.5
     lam_total = lambda_h + lambda_a
     p0 = poisson_pmf(0, lam_total)
     p1 = poisson_pmf(1, lam_total)
@@ -110,7 +109,7 @@ def get_prediction(fixture_id):
     
     return {"match": match_str, "fixture_id": fixture_id, "markets": markets, "features": features}
 
-# ====================== HISTORY FUNCTIONS ======================
+# ====================== HISTORY ======================
 def save_to_history(row_dict):
     global history
     new_row = pd.DataFrame([row_dict])
@@ -131,7 +130,7 @@ def auto_update_history():
                 r = requests.get(f"{BASE_URL}/fixtures?id={row['fixture_id']}", headers=headers)
                 if r.status_code == 200:
                     data = r.json()
-                    if data.get("response") and len(data["response"]) > 0:   # ← CRASH FIXED
+                    if data.get("response") and len(data["response"]) > 0:
                         fix = data["response"][0]
                         if fix["fixture"]["status"]["short"] == "FT":
                             goals_h = fix["goals"]["home"]
@@ -223,7 +222,7 @@ if generate_btn and API_KEY:
         
         df = pd.DataFrame(all_bets).sort_values("confidence", ascending=False)
         
-        # AUTO-LOG EVERY PREDICTION (unlimited storage)
+        # AUTO-LOG (unlimited storage)
         logged_count = 0
         today = str(date.today())
         for bet in all_bets:
@@ -240,26 +239,32 @@ if generate_btn and API_KEY:
                     "actual": None, "correct": None
                 })
                 logged_count += 1
-        st.success(f"✅ Generated {len(predictions)} matches • Auto-logged {logged_count} new predictions (history now has {len(history)} total rows)")
+        st.success(f"✅ Generated {len(predictions)} matches • Auto-logged {logged_count} new predictions (total history: {len(history)} rows)")
 
-        # ====================== AI INSIGHTS (why past predictions failed/succeeded) ======================
+        # AI Insights
         if model is not None:
             st.sidebar.subheader("🔍 AI Learned Insights")
             importances = pd.Series(model.feature_importances_, 
                                   index=["Base Prob", "Form Diff", "Attack Diff", "Defense Diff", "Poisson Home", "Market Type"])
             for feat, imp in importances.sort_values(ascending=False).items():
-                st.sidebar.write(f"• **{feat}** → {imp:.2f} (the model now trusts this factor more because of past results)")
+                st.sidebar.write(f"• **{feat}** → {imp:.2f}")
 
-        # Display groups
+        # DISPLAY (fixed indentation)
         st.header("📋 Ready-to-Paste SportyBet Selections")
         c1, c2, c3 = st.columns(3)
-        with c1: st.subheader("🔒 Safe Acca (≥68%)")
+        
+        with c1:
+            st.subheader("🔒 Safe Acca (≥68%)")
             for _, r in df[df["confidence"] >= 68].iterrows():
                 st.markdown(f"**{r['match']}** → **{r['market']}: {r['selection']}** ({r['confidence']}%)")
-        with c2: st.subheader("⚖️ Medium Acca")
+        
+        with c2:
+            st.subheader("⚖️ Medium Acca")
             for _, r in df[(df["confidence"] >= 55) & (df["confidence"] < 68)].iterrows():
                 st.markdown(f"**{r['match']}** → **{r['market']}: {r['selection']}** ({r['confidence']}%)")
-        with c3: st.subheader("🎲 High-Odds + Poisson Specials")
+        
+        with c3:
+            st.subheader("🎲 High-Odds + Poisson Specials")
             for _, r in df[df["confidence"] < 55].iterrows():
                 st.markdown(f"**{r['match']}** → **{r['market']}: {r['selection']}** ({r['confidence']}%)")
 
