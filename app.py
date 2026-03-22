@@ -8,6 +8,17 @@ import math
 from datetime import date, timedelta
 import os
 
+# ====================== SAFE CONVERSION HELPER ======================
+def safe_float(val, default=0.0):
+    """Convert API values (strings like '2.3' or '55%' or numbers) safely to float."""
+    if val is None:
+        return default
+    try:
+        s = str(val).replace("%", "").strip()
+        return float(s)
+    except (ValueError, TypeError):
+        return default
+
 st.set_page_config(page_title="SportyBet AI Predictor v2", layout="wide")
 st.title("⚽ SportyBet AI Predictor v2 – Stats + Poisson + XGBoost Learning")
 
@@ -54,40 +65,59 @@ def get_prediction(fixture_id):
     comp = data.get("comparison", {})
     match_str = f"{teams['home']['name']} vs {teams['away']['name']}"
     
-    # Extract lambdas from last_5 averages (very accurate proxy)
-    home_last5_for = teams["home"].get("last_5", {}).get("goals", {}).get("for", {}).get("average", 1.3)
-    away_last5_against = teams["away"].get("last_5", {}).get("goals", {}).get("against", {}).get("average", 1.3)
+    # Extract lambdas from last_5 averages (FIXED: safe float conversion)
+    home_last5_for = safe_float(
+        teams["home"].get("last_5", {}).get("goals", {}).get("for", {}).get("average", 1.3), 1.3
+    )
+    away_last5_against = safe_float(
+        teams["away"].get("last_5", {}).get("goals", {}).get("against", {}).get("average", 1.3), 1.3
+    )
     lambda_h = (home_last5_for + away_last5_against) / 2
-    lambda_a = (teams["away"].get("last_5", {}).get("goals", {}).get("for", {}).get("average", 1.3) +
-                teams["home"].get("last_5", {}).get("goals", {}).get("against", {}).get("average", 1.3)) / 2
+
+    away_last5_for = safe_float(
+        teams["away"].get("last_5", {}).get("goals", {}).get("for", {}).get("average", 1.3), 1.3
+    )
+    home_last5_against = safe_float(
+        teams["home"].get("last_5", {}).get("goals", {}).get("against", {}).get("average", 1.3), 1.3
+    )
+    lambda_a = (away_last5_for + home_last5_against) / 2
     
     btts_prob, top_scores = calculate_poisson_markets(lambda_h, lambda_a)
     
     markets = []
-    # 1X2
+    # 1X2 (FIXED: selection now matches auto-update logic)
     percent = pred.get("percent", {})
     for outcome, p in percent.items():
+        if outcome == "home":
+            selection = "Home Win"
+        elif outcome == "away":
+            selection = "Away Win"
+        else:
+            selection = "Draw"
         markets.append({
             "market": "1X2",
-            "selection": outcome.capitalize(),
-            "prob": int(p.replace("%","")) if isinstance(p, str) else int(p),
+            "selection": selection,
+            "prob": int(safe_float(p, 50)),
             "advice": pred.get("advice", "")
         })
+    
     # Under/Over (API)
     if "under_over" in pred:
         markets.append({"market": "Over/Under", "selection": pred["under_over"], "prob": 65, "advice": ""})
+    
     # BTTS
     markets.append({"market": "BTTS", "selection": "Yes" if btts_prob > 50 else "No", "prob": btts_prob, "advice": ""})
+    
     # Correct Score (top one)
     cs = top_scores[0][0]
     markets.append({"market": "Correct Score", "selection": f"{cs[0]}-{cs[1]}", "prob": top_scores[0][1], "advice": ""})
     
-    # Features for XGBoost
+    # Features for XGBoost (FIXED: fully robust parsing)
     features = {
-        "form_diff": float(comp.get("form", {}).get("home", "50").replace("%","")) - float(comp.get("form", {}).get("away", "50").replace("%","")),
-        "att_diff": float(comp.get("att", {}).get("home", "50").replace("%","")) - float(comp.get("att", {}).get("away", "50").replace("%","")),
-        "def_diff": float(comp.get("def", {}).get("home", "50").replace("%","")) - float(comp.get("def", {}).get("away", "50").replace("%","")),
-        "poisson_home": float(comp.get("poisson_distribution", {}).get("home", "50").replace("%",""))
+        "form_diff": safe_float(comp.get("form", {}).get("home", "50")) - safe_float(comp.get("form", {}).get("away", "50")),
+        "att_diff": safe_float(comp.get("att", {}).get("home", "50")) - safe_float(comp.get("att", {}).get("away", "50")),
+        "def_diff": safe_float(comp.get("def", {}).get("home", "50")) - safe_float(comp.get("def", {}).get("away", "50")),
+        "poisson_home": safe_float(comp.get("poisson_distribution", {}).get("home", "50"))
     }
     
     return {
@@ -120,15 +150,26 @@ def auto_update_history():
                         goals_h = fix["goals"]["home"]
                         goals_a = fix["goals"]["away"]
                         actual_result = "Home Win" if goals_h > goals_a else "Away Win" if goals_a > goals_h else "Draw"
+                        
+                        # FIXED: proper correct logic for ALL markets
                         if row["market"] == "1X2":
                             correct = (row["selection"] == actual_result)
                         elif row["market"] == "Over/Under":
-                            correct = (row["selection"] == "Over 2.5" and (goals_h + goals_a) > 2.5) or \
-                                      (row["selection"] == "Under 2.5" and (goals_h + goals_a) <= 2.5)
+                            total = goals_h + goals_a
+                            if row["selection"] == "Over 2.5":
+                                correct = total > 2.5
+                            elif row["selection"] == "Under 2.5":
+                                correct = total <= 2.5
+                            else:
+                                correct = False
                         elif row["market"] == "BTTS":
-                            correct = (row["selection"] == "Yes" and goals_h > 0 and goals_a > 0)
+                            btts_yes = (goals_h > 0 and goals_a > 0)
+                            correct = (row["selection"] == "Yes" and btts_yes) or (row["selection"] == "No" and not btts_yes)
+                        elif row["market"] == "Correct Score":
+                            correct = (row["selection"] == f"{goals_h}-{goals_a}")
                         else:
-                            correct = False  # Correct Score would need exact match
+                            correct = False
+                        
                         history.at[idx, "actual"] = f"{goals_h}-{goals_a}"
                         history.at[idx, "correct"] = correct
         history.to_csv(HISTORY_FILE, index=False)
@@ -143,7 +184,6 @@ def train_xgboost():
     if len(df) < 15:
         return None, None
     
-    # Encode market
     df["market_enc"] = le_market.fit_transform(df["market"].astype(str))
     
     X = df[["prob", "form_diff", "att_diff", "def_diff", "poisson_home", "market_enc"]]
@@ -173,13 +213,11 @@ if generate_btn and API_KEY:
                 if pred:
                     predictions.append(pred)
         
-        # Train model
         model, encoder = train_xgboost()
         
         all_bets = []
         for p in predictions:
             for m in p["markets"]:
-                # XGBoost boost if we have a model
                 base_prob = m["prob"]
                 if model is not None:
                     feat = pd.DataFrame([{
