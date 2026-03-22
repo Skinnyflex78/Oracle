@@ -37,6 +37,19 @@ def save_to_history(row_dict):
     return False
 
 # ====================== THEME & SAFE FLOAT ======================
+def safe_float(val, default=0.0):
+    if val is None: return default
+    try:
+        return float(str(val).replace("%", "").strip())
+    except:
+        return default
+
+# ====================== MUST BE FIRST ======================
+st.set_page_config(page_title="SportyBet AI Predictor v2", layout="wide")
+
+st.title("⚽ SportyBet AI Predictor v2 – Stats + Poisson + XGBoost")
+
+# Theme (now AFTER page_config)
 st.markdown("""
 <style>
     .stApp { background-color: #1E1E2E; color: #E0E0E0; }
@@ -47,31 +60,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def safe_float(val, default=0.0):
-    if val is None: return default
-    try:
-        return float(str(val).replace("%", "").strip())
-    except:
-        return default
-
-st.set_page_config(page_title="SportyBet AI Predictor v2", layout="wide")
-st.title("⚽ SportyBet AI Predictor v2 – Stats + Poisson + XGBoost")
-
 # ====================== API SETUP ======================
 API_KEY = st.sidebar.text_input("API-Football Key", type="password")
 BASE_URL = "https://v3.football.api-sports.io"
 headers = {"x-apisports-key": API_KEY} if API_KEY else None
-
-# ====================== RAPIDAPI FOR FULL LEAGUES (2,100+ leagues) ======================
-try:
-    RAPID_API_KEY = st.secrets["rapidapi"]["key"]
-except (KeyError, TypeError):
-    RAPID_API_KEY = None
-
-if RAPID_API_KEY:
-    st.sidebar.success("✅ RapidAPI loaded – full leagues enabled! (lower divisions, cups, etc.)")
-else:
-    st.sidebar.info("💡 Add [rapidapi] key to secrets.toml for unlimited leagues worldwide")
 
 if not API_KEY:
     st.sidebar.error("⚠️ Enter your API-Football key")
@@ -203,7 +195,9 @@ def auto_update_history():
         st.success(f"✅ Updated {updated} past predictions!")
 
 # ====================== MAIN APP ======================
-date_to_check = st.sidebar.date_input("Date", value=date(2026, 3, 28))
+st.sidebar.info("💡 Tip: Choose **tomorrow** or **today +1 day** for maximum matches (including lower leagues)")
+
+date_to_check = st.sidebar.date_input("Date", value=date(2026, 3, 23))  # default = tomorrow
 
 colA, colB = st.sidebar.columns(2)
 generate_btn = colA.button("Generate Predictions")
@@ -213,29 +207,16 @@ if update_btn and API_KEY:
     auto_update_history()
 
 if generate_btn and API_KEY:
-    with st.spinner("Fetching fixtures..."):
-        if RAPID_API_KEY:
-            rapid_headers = {
-                "x-rapidapi-key": RAPID_API_KEY,
-                "x-rapidapi-host": "free-api-live-football-data.p.rapidapi.com"
-            }
-            resp = requests.get(
-                f"https://free-api-live-football-data.p.rapidapi.com/fixtures/date/{date_to_check.strftime('%Y-%m-%d')}",
-                headers=rapid_headers
-            )
-            source = "RapidAPI (ALL leagues)"
-        else:
-            resp = requests.get(f"{BASE_URL}/fixtures?date={date_to_check.strftime('%Y-%m-%d')}", headers=headers)
-            source = "API-Football (limited leagues)"
-        
+    with st.spinner("Fetching fixtures from API-Football..."):
+        resp = requests.get(f"{BASE_URL}/fixtures?date={date_to_check.strftime('%Y-%m-%d')}", headers=headers)
         fixtures = resp.json().get("response", []) if resp.status_code == 200 else []
         
         ns_fixtures = [f for f in fixtures if f.get("fixture", {}).get("status", {}).get("short") == "NS"]
         
-        st.info(f"📅 **Date checked:** {date_to_check} | Total fixtures: {len(fixtures)} | Upcoming (NS): {len(ns_fixtures)} | Source: {source}")
+        st.info(f"📅 **Date checked:** {date_to_check} | Total fixtures: {len(fixtures)} | Upcoming (NS): {len(ns_fixtures)}")
         
         if len(ns_fixtures) == 0:
-            st.warning("⚠️ No upcoming matches (NS) on this date. Try tomorrow or the next weekend. Free plans show more matches closer to kick-off.")
+            st.warning("⚠️ No upcoming matches on this date. Try tomorrow!")
             st.stop()
         
         predictions = []
@@ -288,9 +269,8 @@ if generate_btn and API_KEY:
             if save_to_history(row_dict):
                 logged_count += 1
         
-        st.success(f"✅ Generated {len(predictions)} matches • Auto-logged {logged_count} new predictions (total history: {len(load_history())} rows)")
+        st.success(f"✅ Generated {len(predictions)} matches • Auto-logged {logged_count} new predictions")
 
-        # AI Insights + Display
         if model is not None:
             st.sidebar.subheader("🔍 AI Learned Insights")
             importances = pd.Series(model.feature_importances_, 
@@ -328,4 +308,4 @@ if not df.empty:
 else:
     st.info("Generate predictions — they are now saved forever in Supabase!")
 
-st.caption("✅ Permanent Supabase storage • XGBoost retrains on every result • Full-league support via RapidAPI")
+st.caption("✅ Permanent Supabase storage • XGBoost retrains on every result")
