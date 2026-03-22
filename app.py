@@ -44,11 +44,9 @@ def safe_float(val, default=0.0):
     except:
         return default
 
-# ====================== MUST BE FIRST ======================
 st.set_page_config(page_title="SportyBet AI Predictor v2", layout="wide")
 st.title("⚽ SportyBet AI Predictor v2 – Stats + Poisson + XGBoost")
 
-# Theme (now AFTER page_config)
 st.markdown("""
 <style>
     .stApp { background-color: #1E1E2E; color: #E0E0E0; }
@@ -59,23 +57,22 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ====================== API SETUP (FIXED – whitespace stripped) ======================
+# ====================== API SETUP – WHITESPACE FIXED (double clean) ======================
 raw_key = st.sidebar.text_input("API-Football Key", type="password")
-API_KEY = raw_key.strip() if raw_key else None
+API_KEY = ''.join(raw_key.split()) if raw_key else None   # removes ALL spaces, newlines, tabs
 BASE_URL = "https://v3.football.api-sports.io"
 headers = {"x-apisports-key": API_KEY} if API_KEY else None
 
 if not API_KEY:
-    st.sidebar.error("⚠️ Enter your API-Football key (no extra spaces or newlines)")
+    st.sidebar.error("⚠️ Enter your API-Football key")
     st.stop()
 
-# Quick validation
-if len(API_KEY) < 10:
-    st.sidebar.warning("⚠️ Key looks too short – double-check you pasted the correct API-Football key (not RapidAPI)")
+if len(raw_key) != len(API_KEY):
+    st.sidebar.warning("⚠️ Extra spaces/newlines were removed from your key")
 
 le_market = LabelEncoder()
 
-# ====================== POISSON & PREDICTION FUNCTIONS ======================
+# ====================== (rest of the code is unchanged – Poisson, XGBoost, etc.) ======================
 def poisson_pmf(k, lam):
     return math.exp(-lam) * (lam ** k) / math.factorial(k) if lam > 0 else 0
 
@@ -199,7 +196,7 @@ def auto_update_history():
         st.success(f"✅ Updated {updated} past predictions!")
 
 # ====================== MAIN APP ======================
-st.sidebar.info("💡 Tip: Choose **tomorrow** for the most matches (including lower leagues)")
+st.sidebar.info("💡 Choose tomorrow’s date for the most matches")
 
 date_to_check = st.sidebar.date_input("Date", value=date(2026, 3, 23))
 
@@ -220,9 +217,10 @@ if generate_btn and API_KEY:
         st.info(f"📅 **Date checked:** {date_to_check} | Total fixtures: {len(fixtures)} | Upcoming (NS): {len(ns_fixtures)}")
         
         if len(ns_fixtures) == 0:
-            st.warning("⚠️ No upcoming matches on this date. Try tomorrow!")
+            st.warning("⚠️ No upcoming matches. Try tomorrow!")
             st.stop()
         
+        # (rest of prediction logic, XGBoost, display – exactly the same as before)
         predictions = []
         for f in ns_fixtures[:20]:
             pred = get_prediction(f["fixture"]["id"])
