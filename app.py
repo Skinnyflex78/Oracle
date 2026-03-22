@@ -46,7 +46,6 @@ def safe_float(val, default=0.0):
 
 # ====================== MUST BE FIRST ======================
 st.set_page_config(page_title="SportyBet AI Predictor v2", layout="wide")
-
 st.title("⚽ SportyBet AI Predictor v2 – Stats + Poisson + XGBoost")
 
 # Theme (now AFTER page_config)
@@ -60,14 +59,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ====================== API SETUP ======================
-API_KEY = st.sidebar.text_input("API-Football Key", type="password")
+# ====================== API SETUP (FIXED – whitespace stripped) ======================
+raw_key = st.sidebar.text_input("API-Football Key", type="password")
+API_KEY = raw_key.strip() if raw_key else None
 BASE_URL = "https://v3.football.api-sports.io"
 headers = {"x-apisports-key": API_KEY} if API_KEY else None
 
 if not API_KEY:
-    st.sidebar.error("⚠️ Enter your API-Football key")
+    st.sidebar.error("⚠️ Enter your API-Football key (no extra spaces or newlines)")
     st.stop()
+
+# Quick validation
+if len(API_KEY) < 10:
+    st.sidebar.warning("⚠️ Key looks too short – double-check you pasted the correct API-Football key (not RapidAPI)")
 
 le_market = LabelEncoder()
 
@@ -195,9 +199,9 @@ def auto_update_history():
         st.success(f"✅ Updated {updated} past predictions!")
 
 # ====================== MAIN APP ======================
-st.sidebar.info("💡 Tip: Choose **tomorrow** or **today +1 day** for maximum matches (including lower leagues)")
+st.sidebar.info("💡 Tip: Choose **tomorrow** for the most matches (including lower leagues)")
 
-date_to_check = st.sidebar.date_input("Date", value=date(2026, 3, 23))  # default = tomorrow
+date_to_check = st.sidebar.date_input("Date", value=date(2026, 3, 23))
 
 colA, colB = st.sidebar.columns(2)
 generate_btn = colA.button("Generate Predictions")
